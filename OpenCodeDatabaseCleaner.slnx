@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="OpenCodeDatabaseCleaner.csproj" />
+  <Project Path="OpenCodeDatabaseCleaner.Tests/OpenCodeDatabaseCleaner.Tests.csproj" />
+</Solution>
