@@ -27,14 +27,14 @@ Only OpenCode V1 message storage is supported:
 - Current projections are in `message` and `part`.
 - Durable copies are in `event` with types `message.updated.1` and `message.part.updated.1`.
 
-The cleaner deliberately rejects:
+V2 storage may coexist in the same database. The cleaner ignores and leaves unchanged `session_message`, `session_input`, and `session.next.*` events. Preview and result statistics report the number of V2 `session_message` rows matching the same cutoff, but this count is informational and those rows are not cleanup actions.
 
-- Non-empty `session_message` or `session_input` tables.
-- Any `session.next.*` events.
+The cleaner deliberately rejects V1 inconsistencies including:
+
 - Orphaned or incorrectly assigned parts.
 - Malformed or incorrectly assigned V1 message events.
 
-Do not weaken these checks or attempt partial V2 cleanup. A successful command must not imply content was removed when another supported-looking storage path still contains it.
+Do not weaken these V1 checks or attempt V2 cleanup. Output and documentation must clearly distinguish cleaned V1 messages from matching V2 messages that were skipped.
 
 ## Repository Layout
 
@@ -53,12 +53,13 @@ Dependency flow is `Program` -> `OpenCodeDb` -> SQLite. `OpenCodeDb` also compos
 
 `OpenCodeDb.BuildCleanupPlan` is the central orchestration method:
 
-1. Validate that the database uses supported, internally consistent V1 storage.
-2. Select every current message with `time_created` older than the cutoff. With `--days 0`, select every current message regardless of its timestamp. Newer messages in the same session remain untouched when the cutoff is non-zero.
-3. Select each eligible message's earliest non-synthetic text part, falling back to its earliest synthetic text part.
-4. Sanitize each eligible message. Retain and sanitize its selected text part and delete its other current parts.
-5. Add a generated placeholder part to each eligible message without a text part.
-6. Sanitize matching V1 message events and retained-part events; delete other V1 part events for the eligible message.
+1. Validate that the database uses internally consistent V1 storage without inspecting V2 content.
+2. Select every current V1 message with `time_created` older than the cutoff. With `--days 0`, select every current V1 message regardless of its timestamp. Newer messages in the same session remain untouched when the cutoff is non-zero.
+3. Count V2 `session_message` rows with `time_created` older than the same cutoff for the skipped-message statistic.
+4. Select each eligible V1 message's earliest non-synthetic text part, falling back to its earliest synthetic text part.
+5. Sanitize each eligible V1 message. Retain and sanitize its selected text part and delete its other current parts.
+6. Add a generated placeholder part to each eligible V1 message without a text part.
+7. Sanitize matching V1 message events and retained-part events; delete other V1 part events for the eligible message.
 
 Do not extend cleanup to newer messages merely because they share a session with an eligible message.
 
@@ -100,6 +101,7 @@ The old `<REMOVED_MESSAGE_CONTENT>` sentinel is not part of the design. Do not r
 - Keep `PRAGMA secure_delete = ON` when opening the database.
 - After a committed cleanup, attempt WAL truncation and then vacuum only if the checkpoint succeeds. These operations can fail after the data transaction has already committed, so report their failures accurately.
 - Continue rejecting malformed JSON, an unsupported role on any retained message, and a retained part that is not text.
+- Never update or delete V2 tables or `session.next.*` events. V2 changes do not affect the confirmed V1 action set.
 
 The README tells users to close OpenCode before cleanup. Concurrency checks are still mandatory; instructions are not a substitute for enforcing consistency.
 
@@ -170,6 +172,7 @@ For cleanup behavior changes, test both current projection rows and durable even
 - Preservation of required operational metadata.
 - Idempotency: a second preview has no cleanup actions for already-cleaned messages.
 - Unrelated and recent messages, session rows, and session events remain unchanged.
+- Coexisting V2 messages, inputs, and events remain unchanged, while matching V2 messages are counted accurately.
 
 Add focused tests for malformed data and unsupported storage whenever validation changes.
 

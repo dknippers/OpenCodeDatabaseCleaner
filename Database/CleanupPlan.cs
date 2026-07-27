@@ -7,12 +7,14 @@ public sealed class CleanupPreview
     internal CleanupPreview(CleanupPlan plan)
     {
         MessageCount = plan.MessageCount;
+        SkippedV2MessageCount = plan.SkippedV2MessageCount;
         ProjectionRowCount = plan.ProjectionRowCount;
         EventRowCount = plan.EventRowCount;
         _targets = plan.Actions.Select(ContentActionTarget.FromAction).ToHashSet();
     }
 
     public int MessageCount { get; }
+    public int SkippedV2MessageCount { get; }
     public int ProjectionRowCount { get; }
     public int EventRowCount { get; }
     public int ActionCount => _targets.Count;
@@ -27,10 +29,14 @@ internal sealed class CleanupPlan
     private readonly HashSet<string> _messageIds;
     private readonly List<ContentAction> _actions = [];
 
-    internal CleanupPlan(IEnumerable<string> messageIds) =>
+    internal CleanupPlan(IEnumerable<string> messageIds, int skippedV2MessageCount)
+    {
         _messageIds = messageIds.ToHashSet(StringComparer.Ordinal);
+        SkippedV2MessageCount = skippedV2MessageCount;
+    }
 
     internal int MessageCount => _messageIds.Count;
+    internal int SkippedV2MessageCount { get; }
     internal int ProjectionRowCount => _actions.Count(action => action.Table is "message" or "part");
     internal int EventRowCount => _actions.Count(action => action.Table == "event");
     internal int ActionCount => _actions.Count;

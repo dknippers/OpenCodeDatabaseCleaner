@@ -70,7 +70,8 @@ try
         ? "Scope:    All messages"
         : $"Cutoff:   {DateTimeOffset.FromUnixTimeMilliseconds(cutoffMilliseconds):yyyy-MM-dd HH:mm:ss 'UTC'} (messages older than {days.Value} days)");
     Console.WriteLine();
-    Console.WriteLine($"Messages selected for cleanup:       {preview.MessageCount:N0}");
+    Console.WriteLine($"V1 messages selected for cleanup:    {preview.MessageCount:N0}");
+    Console.WriteLine($"V2 messages matching filter, skipped: {preview.SkippedV2MessageCount:N0}");
     Console.WriteLine($"Current message/part rows to change: {preview.ProjectionRowCount:N0}");
     Console.WriteLine($"Historical event rows to change:     {preview.EventRowCount:N0}");
 
@@ -105,7 +106,8 @@ try
 
     var changedRows = database.ApplyCleanup(preview, cutoffMilliseconds);
     Console.WriteLine();
-    Console.WriteLine($"Cleaned {preview.MessageCount:N0} messages by changing {changedRows:N0} database rows.");
+    Console.WriteLine($"Cleaned {preview.MessageCount:N0} V1 messages by changing {changedRows:N0} database rows.");
+    Console.WriteLine($"Skipped {preview.SkippedV2MessageCount:N0} V2 messages matching the filter.");
 
     try
     {
@@ -169,6 +171,6 @@ static void PrintUsage()
         Running without arguments only shows this help. Applying a non-empty cleanup requires typing
         REMOVE after the preview is displayed, then attempts to reclaim unused disk space automatically.
         Close OpenCode before running cleanup.
-        Databases containing OpenCode's newer V2 message storage are rejected rather than partially cleaned.
+        V2 data is left unchanged; the preview reports matching V2 messages that will be skipped.
         """);
 }

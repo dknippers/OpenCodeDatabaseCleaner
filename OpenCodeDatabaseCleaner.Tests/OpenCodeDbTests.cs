@@ -492,6 +492,74 @@ public sealed class OpenCodeDbTests : IDisposable
             JsonNode.Parse(Scalar<string>(verificationConnection, "SELECT data FROM event WHERE id = 'empty-text-event'"))!["part"]!["text"]!.GetValue<string>());
     }
 
+    [Fact]
+    public void CleanupCountsAndLeavesV2DataUntouched()
+    {
+        CreateDatabase();
+        using (var connection = OpenConnection())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                CREATE TABLE session_message (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    seq INTEGER NOT NULL,
+                    time_created INTEGER NOT NULL,
+                    time_updated INTEGER NOT NULL,
+                    data TEXT NOT NULL);
+                CREATE TABLE session_input (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    prompt TEXT NOT NULL,
+                    delivery TEXT NOT NULL,
+                    admitted_seq INTEGER NOT NULL,
+                    promoted_seq INTEGER,
+                    time_created INTEGER NOT NULL);
+
+                INSERT INTO session_message VALUES
+                    ('v2-old', 'old', 'user', 10, 100, 101, '{"private":"old V2 content"}'),
+                    ('v2-cutoff', 'old', 'assistant', 11, 500, 501, '{"private":"cutoff V2 content"}'),
+                    ('v2-recent', 'recent', 'user', 10, 800, 801, '{"private":"recent V2 content"}');
+                INSERT INTO session_input VALUES
+                    ('v2-input', 'old', 'private V2 prompt', 'immediate', 12, NULL, 100);
+                INSERT INTO event VALUES
+                    ('v2-event', 'old', 20, 'session.next.prompted.1', '{"private":"V2 event content"}');
+                """;
+            command.ExecuteNonQuery();
+        }
+
+        const string v2MessagesBefore =
+            "v2-cutoff|500|{\"private\":\"cutoff V2 content\"}\n" +
+            "v2-old|100|{\"private\":\"old V2 content\"}\n" +
+            "v2-recent|800|{\"private\":\"recent V2 content\"}";
+
+        using (var database = new OpenCodeDb(_databasePath))
+        {
+            var preview = database.BuildCleanupPreview(500);
+
+            Assert.Equal(3, preview.MessageCount);
+            Assert.Equal(1, preview.SkippedV2MessageCount);
+            Assert.Equal(11, database.ApplyCleanup(preview, 500));
+
+            var secondPreview = database.BuildCleanupPreview(500);
+            Assert.Equal(0, secondPreview.ActionCount);
+            Assert.Equal(1, secondPreview.SkippedV2MessageCount);
+        }
+
+        using var verificationConnection = OpenConnection();
+        Assert.Equal(v2MessagesBefore, Scalar<string>(verificationConnection, """
+            SELECT group_concat(id || '|' || time_created || '|' || data, char(10))
+            FROM (SELECT id, time_created, data FROM session_message ORDER BY id)
+            """));
+        Assert.Equal(
+            "private V2 prompt",
+            Scalar<string>(verificationConnection, "SELECT prompt FROM session_input WHERE id = 'v2-input'"));
+        Assert.Equal(
+            "{\"private\":\"V2 event content\"}",
+            Scalar<string>(verificationConnection, "SELECT data FROM event WHERE id = 'v2-event'"));
+    }
+
     public void Dispose()
     {
         if (File.Exists(_databasePath))

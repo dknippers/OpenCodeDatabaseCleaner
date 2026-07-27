@@ -123,7 +123,8 @@ public sealed class OpenCodeDb : IDisposable
         EnsureSupportedStorage(transaction);
 
         var anchors = GetEligibleMessageAnchors(cutoffMilliseconds, transaction);
-        var plan = new CleanupPlan(anchors.Keys);
+        var skippedV2MessageCount = CountV2Messages(cutoffMilliseconds, transaction);
+        var plan = new CleanupPlan(anchors.Keys, skippedV2MessageCount);
 
         AddMessageActions(plan, anchors, cutoffMilliseconds, transaction);
         AddPartActions(plan, anchors, cutoffMilliseconds, transaction);
@@ -134,12 +135,6 @@ public sealed class OpenCodeDb : IDisposable
 
     private void EnsureSupportedStorage(SqliteTransaction? transaction)
     {
-        if (TableHasRows("session_message", transaction) || TableHasRows("session_input", transaction))
-        {
-            throw new NotSupportedException(
-                "This database contains OpenCode V2 messages, which this version cannot safely clean.");
-        }
-
         using var command = _connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
@@ -164,13 +159,6 @@ public sealed class OpenCodeDb : IDisposable
         if (Convert.ToInt32(command.ExecuteScalar()) != 0)
         {
             throw new InvalidDataException("The database contains messages assigned to a missing session.");
-        }
-
-        command.CommandText = "SELECT EXISTS(SELECT 1 FROM event WHERE type LIKE 'session.next.%')";
-        if (Convert.ToInt32(command.ExecuteScalar()) != 0)
-        {
-            throw new NotSupportedException(
-                "This database contains OpenCode V2 events, which this version cannot safely clean.");
         }
 
         command.CommandText = """
@@ -217,22 +205,23 @@ public sealed class OpenCodeDb : IDisposable
 
     }
 
-    private bool TableHasRows(string tableName, SqliteTransaction? transaction)
+    private int CountV2Messages(long cutoffMilliseconds, SqliteTransaction? transaction)
     {
         using var existsCommand = _connection.CreateCommand();
         existsCommand.Transaction = transaction;
         existsCommand.CommandText =
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = @tableName)";
-        existsCommand.Parameters.AddWithValue("@tableName", tableName);
+        existsCommand.Parameters.AddWithValue("@tableName", "session_message");
         if (Convert.ToInt32(existsCommand.ExecuteScalar()) == 0)
         {
-            return false;
+            return 0;
         }
 
-        using var rowsCommand = _connection.CreateCommand();
-        rowsCommand.Transaction = transaction;
-        rowsCommand.CommandText = $"SELECT EXISTS(SELECT 1 FROM {tableName})";
-        return Convert.ToInt32(rowsCommand.ExecuteScalar()) != 0;
+        using var countCommand = _connection.CreateCommand();
+        countCommand.Transaction = transaction;
+        countCommand.CommandText = "SELECT COUNT(*) FROM session_message WHERE time_created < @cutoff";
+        countCommand.Parameters.AddWithValue("@cutoff", cutoffMilliseconds);
+        return Convert.ToInt32(countCommand.ExecuteScalar());
     }
 
     private Dictionary<string, MessageAnchor> GetEligibleMessageAnchors(
