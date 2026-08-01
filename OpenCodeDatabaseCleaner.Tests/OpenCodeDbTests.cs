@@ -30,7 +30,7 @@ public sealed class OpenCodeDbTests : IDisposable
         using var connection = OpenConnection();
         Assert.Equal(2L, Scalar<long>(connection, "SELECT COUNT(*) FROM message WHERE session_id = 'old'"));
         Assert.Equal(2L, Scalar<long>(connection, "SELECT COUNT(*) FROM part WHERE session_id = 'old'"));
-        Assert.Equal(3L, Scalar<long>(connection, "SELECT COUNT(*) FROM event WHERE aggregate_id = 'old' AND type LIKE 'message.%'"));
+        Assert.Equal(4L, Scalar<long>(connection, "SELECT COUNT(*) FROM event WHERE aggregate_id = 'old' AND type LIKE 'message.%'"));
         Assert.Equal(1L, Scalar<long>(connection, "SELECT COUNT(*) FROM message WHERE id = 'old-user'"));
         Assert.Equal(1L, Scalar<long>(connection, "SELECT COUNT(*) FROM message WHERE id = 'old-assistant'"));
         Assert.Equal(2L, Scalar<long>(connection, """
@@ -59,6 +59,14 @@ public sealed class OpenCodeDbTests : IDisposable
         Assert.Equal(
             "<cleaned>",
             JsonNode.Parse(Scalar<string>(connection, "SELECT data FROM event WHERE id = 'old-user-text-event'"))!["part"]!["text"]!.GetValue<string>());
+        Assert.Equal(
+            "<cleaned>",
+            JsonNode.Parse(Scalar<string>(connection, "SELECT data FROM event WHERE id = 'old-tool-event'"))!["part"]!["text"]!.GetValue<string>());
+        Assert.Equal(
+            "text",
+            JsonNode.Parse(Scalar<string>(connection, "SELECT data FROM event WHERE id = 'old-tool-event'"))!["part"]!["type"]!.GetValue<string>());
+        Assert.Null(JsonNode.Parse(
+            Scalar<string>(connection, "SELECT data FROM event WHERE id = 'old-tool-event'"))!["part"]!["state"]);
 
         var retainedMessage = JsonNode.Parse(Scalar<string>(connection, "SELECT data FROM message WHERE id = 'old-user'"))!;
         var retainedMessageEvent = JsonNode.Parse(
@@ -131,7 +139,7 @@ public sealed class OpenCodeDbTests : IDisposable
               AND (SELECT COUNT(*) FROM part AS p WHERE p.message_id = m.id) = 1
             """));
         Assert.Equal(7L, Scalar<long>(connection, "SELECT COUNT(*) FROM event WHERE type = 'message.updated.1'"));
-        Assert.Equal(6L, Scalar<long>(connection, """
+        Assert.Equal(7L, Scalar<long>(connection, """
             SELECT COUNT(*)
             FROM event
             WHERE type = 'message.part.updated.1'
@@ -140,6 +148,40 @@ public sealed class OpenCodeDbTests : IDisposable
             """));
         Assert.Equal(4L, Scalar<long>(connection, "SELECT COUNT(*) FROM session"));
         Assert.Equal("Original recent title", Scalar<string>(connection, "SELECT title FROM session WHERE id = 'recent'"));
+    }
+
+    [Fact]
+    public void CleanupNeverDeletesEventRows()
+    {
+        CreateDatabase();
+        long eventsBefore;
+        using (var connection = OpenConnection())
+        {
+            eventsBefore = Scalar<long>(connection, "SELECT COUNT(*) FROM event");
+        }
+
+        using (var database = new OpenCodeDb(_databasePath))
+        {
+            var preview = database.BuildCleanupPreview(500);
+            database.ApplyCleanup(preview, 500);
+            Assert.Equal(0, database.BuildCleanupPreview(500).ActionCount);
+        }
+
+        using var verificationConnection = OpenConnection();
+        Assert.Equal(eventsBefore, Scalar<long>(verificationConnection, "SELECT COUNT(*) FROM event"));
+        Assert.Equal(3L, Scalar<long>(verificationConnection, """
+            SELECT COUNT(*)
+            FROM event
+            WHERE type = 'message.part.updated.1'
+              AND json_extract(data, '$.part.type') = 'text'
+              AND json_extract(data, '$.part.text') = '<cleaned>'
+            """));
+        Assert.Equal(0L, Scalar<long>(verificationConnection, """
+            SELECT COUNT(*)
+            FROM event
+            WHERE json_extract(data, '$.part.state') IS NOT NULL
+               OR json_extract(data, '$.part.metadata') IS NOT NULL
+            """));
     }
 
     [Fact]

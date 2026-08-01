@@ -12,7 +12,7 @@ For each eligible message, the required result is:
 
 - Every current `message` row retained and sanitized as a metadata record.
 - Exactly one ordinary text `part` per current message containing `<cleaned>`: retain and sanitize the earliest non-synthetic text part, fall back to the earliest synthetic text part, or generate one when the message has no text part.
-- Matching `message.updated.1` durable event rows sanitized as the retained message, and matching retained-text `message.part.updated.1` rows sanitized as the placeholder. Other V1 part events for that message are deleted.
+- Matching `message.updated.1` durable event rows sanitized as the retained message, and matching retained-text `message.part.updated.1` rows sanitized as the placeholder. Other V1 part events for that message are rewritten as `<cleaned>` text placeholder events; no `event` row is ever deleted.
 - No other current parts for that message.
 - Operational metadata on every current message, such as IDs, timestamps, role, model/provider identifiers, tokens, and cost, remains available.
 - Conversation content and content-bearing metadata is deleted, not replaced with redaction markers.
@@ -65,7 +65,7 @@ Do not extend cleanup to newer messages merely because they share a session with
 
 ## Sanitization Contract
 
-`ContentSanitizer` transforms every current message row that survives cleanup. Retained text parts become exact placeholders; other parts and non-anchor events are deleted rather than individually redacted.
+`ContentSanitizer` transforms every current message row that survives cleanup. Retained text parts become exact placeholders; other current parts are deleted and non-anchor part events are rewritten as `<cleaned>` text placeholder events rather than individually redacted.
 
 For every retained user message:
 
@@ -84,7 +84,7 @@ For the retained text part:
 - Set `text` to `<cleaned>`.
 - Remove `metadata` entirely.
 
-Apply the same transformation to matching durable event payloads. Preserve all other message properties, including operational metadata such as `modelID`, `providerID`, `cost`, and `tokens`.
+Apply the same transformation to matching durable event payloads. Non-retained part events are rewritten as `<cleaned>` text placeholder events preserving the original part identity, row, sequence, and event type. Preserve all other message properties, including operational metadata such as `modelID`, `providerID`, `cost`, and `tokens`.
 
 Sanitization currently uses an explicit list of known content-bearing fields. When OpenCode adds or changes message fields, classify them deliberately and add tests. Unknown content-bearing fields are a privacy risk; do not silently assume they are harmless.
 
@@ -107,7 +107,7 @@ The README tells users to close OpenCode before cleanup. Concurrency checks are 
 
 ## Event Semantics
 
-Event rows are durable historical copies, not disposable cache entries. Leaving matching message or retained-part events unsanitized would preserve deleted conversation content. Non-retained part events for an eligible message are deleted because its sanitized current message row retains the required operational metadata without duplicating it in durable history.
+Event rows are durable historical copies, not disposable cache entries. Leaving matching message or retained-part events unsanitized would preserve deleted conversation content. Non-retained part events for an eligible message are rewritten as `<cleaned>` text placeholder events: the row, `aggregate_id`, `seq`, and `type` are preserved so the event sequence stays contiguous and sync replay remains valid, while the conversation content is removed.
 
 Only V1 message event types whose embedded message identity matches an eligible current message are changed. Session events and event-only history are not changed. If a new event type can contain conversation content, treat that as a storage-format change and update validation, planning, sanitization, tests, and documentation together.
 

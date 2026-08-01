@@ -405,7 +405,11 @@ public sealed class OpenCodeDb : IDisposable
             }
             else
             {
-                plan.AddDelete(sessionId, "event", id, null);
+                var placeholder = ContentSanitizer.CreatePlaceholderPartEventForRemovedPart(data);
+                if (placeholder is not null)
+                {
+                    plan.AddUpdate(sessionId, "event", id, null, placeholder);
+                }
             }
         }
     }

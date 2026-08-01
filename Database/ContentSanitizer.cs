@@ -52,6 +52,40 @@ internal static class ContentSanitizer
         return changed ? root.ToJsonString() : null;
     }
 
+    public static string? CreatePlaceholderPartEventForRemovedPart(string data)
+    {
+        var root = ParseObject(data);
+        if (root["part"] is not JsonObject part)
+        {
+            throw new InvalidDataException("A message-part event is missing its part payload.");
+        }
+
+        var id = GetString(part, "id");
+        var sessionID = GetString(part, "sessionID");
+        var messageID = GetString(part, "messageID");
+        if (id is null || sessionID is null || messageID is null)
+        {
+            throw new InvalidDataException("A message-part event is missing its part identity.");
+        }
+
+        var placeholder = new JsonObject
+        {
+            ["id"] = id,
+            ["sessionID"] = sessionID,
+            ["messageID"] = messageID,
+            ["type"] = "text",
+            ["text"] = PlaceholderText
+        };
+
+        if (JsonNode.DeepEquals(part, placeholder))
+        {
+            return null;
+        }
+
+        root["part"] = placeholder;
+        return root.ToJsonString();
+    }
+
     public static (string? MessageId, string? PartId) GetEventIdentity(string eventType, string data)
     {
         var root = ParseObject(data);
